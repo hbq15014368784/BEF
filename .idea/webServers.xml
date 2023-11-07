@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="90438e93-1ea8-41f5-8db0-6174fef7d720" name="genb">
+        <fileTransfer rootFolder="/home/hbq" accessType="SFTP" host="172.18.92.187" port="22" sshConfigId="31e88157-d923-4b92-96f1-6a08d19d54ff" sshConfig="hbq@172.18.92.187:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
