@@ -11,6 +11,33 @@ import torch.nn.functional as F
 
 Tensor = torch.cuda.FloatTensor
 
+def compute_supcon_loss(feats, bias, qtype):
+    gen_grad = torch.clamp(2 * qtype * torch.sigmoid(-2 * qtype * bias.detach()), 0, 1)
+    tau = 1.0
+    gen_grad = torch.argmax(gen_grad, 1)
+    if isinstance(gen_grad, tuple):
+      i = 0
+      dic = {}
+      for item in gen_grad:
+          if item not in dic:
+              dic[item] = i
+              i = i + 1
+      tau = 1.0
+      gen_grad = torch.tensor([dic[item] for item in qtype]).cuda()
+    feats_filt = F.normalize(feats, dim=1)
+    targets_r = gen_grad.reshape(-1, 1)
+    targets_c = gen_grad.reshape(1, -1)
+    mask = targets_r == targets_c
+    mask = mask.float().cuda()
+    feats_sim = torch.exp(torch.matmul(feats_filt, feats_filt.T) / tau)
+    negatives = feats_sim*(1.0 - mask)
+    negative_sum = torch.sum(negatives)
+    positives = torch.log(feats_sim/negative_sum)*mask
+    positive_sum = torch.sum(positives)
+    positive_sum = positive_sum/torch.sum(mask)
+
+    sup_con_loss = -1*torch.mean(positive_sum)
+    return sup_con_loss
 
 def compute_score_with_logits(logits, labels):
     logits = torch.argmax(logits, 1)
@@ -96,7 +123,8 @@ def train(model, genb, discriminator, train_loader, eval_loader,args,qid2type):
             genb.train(False)
             pred_g = genb(v, q, gen=False)
 
-            genb_loss = calc_genb_loss(pred, pred_g, a)
+            # genb_loss = calc_genb_loss(pred, pred_g, a)
+            genb_loss = compute_supcon_loss(pred, pred_g, a)
             genb_loss.backward()
 
             nn.utils.clip_grad_norm_(model.parameters(), 0.25)
