@@ -10,7 +10,7 @@ from torch.autograd import Variable
 
 import torch.nn.init as init
 
-
+import math
 
 def kaiming_init(m):
     if isinstance(m, (nn.Linear, nn.Conv2d)):
@@ -65,7 +65,7 @@ class BaseModel(nn.Module):
         joint_repr = v_repr * q_repr
         logits = self.classifier(joint_repr)
 
-        return logits
+        return joint_repr, logits
 
 
 class GenB(nn.Module):
@@ -152,6 +152,70 @@ class Discriminator(nn.Module):
         return self.net(z)
 
 
+class ArcMarginProduct(nn.Module):
+    r"""Implement of large margin arc distance: :
+        Args:
+            in_features: size of each input sample
+            out_features: size of each output sample
+            s: norm of input feature
+            m: margin
+            cos(theta + m)
+        """
+
+    def __init__(self, in_features, out_features, s=16, easy_margin=False):
+        super(ArcMarginProduct, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.s = s
+        self.weight = nn.Parameter(torch.FloatTensor(out_features, in_features))
+        nn.init.xavier_uniform_(self.weight)
+        self.easy_margin = easy_margin
+        self.std = 0.1
+        self.temp = 0.2
+
+    def forward(self, input, learned_mg, m, epoch, label):
+        cosine = F.linear(F.normalize(input), F.normalize(self.weight))
+        if self.training is False:
+            return None, cosine
+
+        # Set beta (Subsecion 3.3 in main paper
+        beta_factor = epoch // 15
+        beta = 1.0 - (beta_factor * 0.1)
+
+        # Calculate the learnable instance-level margins, Subsection 3.3 in main paper
+        learned_mg = learned_mg.double()
+        other_value = torch.tensor(-1000.0, dtype=learned_mg.dtype, device=learned_mg.device)
+        learned_mg = torch.where(m > 1e-12, learned_mg, other_value).float()
+        margin = F.softmax(learned_mg / self.temp, dim=1)
+
+        # Perform randomization as mentioned in Section 3 of main paper
+        if True:
+            m = torch.normal(mean=m, std=self.std)
+
+        # Combine the margins, as in Subsection 3.3 of main paper.
+        if True:
+            m[label != 0] = beta * m[label != 0] + (1 - beta) * margin[label != 0]
+        m = 1 - m
+
+        # Compute the AdaArc angular margins and the corresponding logits
+        self.cos_m = torch.cos(m)
+        self.sin_m = torch.sin(m)
+        self.th = torch.cos(math.pi - m)
+        self.mm = torch.sin(math.pi - m) * m
+        # --------------------------- cos(theta) & phi(theta) ---------------------------
+
+        # cosine = input
+        sine = torch.sqrt((1.0 - torch.pow(cosine, 2)).clamp(0, 1))
+        phi = cosine * self.cos_m - sine * self.sin_m
+        if self.easy_margin:
+            phi = torch.where(cosine > 0, phi, cosine)
+        else:
+            phi = torch.where(cosine > self.th, phi, cosine - self.mm)
+
+        output = phi * self.s
+        return output, cosine
+
+
 def build_baseline0(dataset, num_hid):
     w_emb = WordEmbedding(dataset.dictionary.ntoken, 300, 0.0)
     q_emb = QuestionEmbedding(300, num_hid, 1, False, 0.0)
@@ -170,5 +234,7 @@ def build_baseline0_newatt(dataset, num_hid):
     v_net = FCNet([dataset.v_dim, num_hid])
     classifier = SimpleClassifier(
         num_hid, num_hid * 2, dataset.num_ans_candidates, 0.5)
+    basemodel = BaseModel(w_emb, q_emb, v_att, q_net, v_net, classifier)
+    margin_model = ArcMarginProduct(num_hid, dataset.num_ans_candidates)
 
-    return BaseModel(w_emb, q_emb, v_att, q_net, v_net, classifier)
+    return basemodel, margin_model

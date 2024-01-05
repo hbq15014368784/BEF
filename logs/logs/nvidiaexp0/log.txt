@@ -1,0 +1,2 @@
+Epoch 1, time: 4494.20
+	train_loss: 28.94, score: 45.56

@@ -13,6 +13,8 @@ from train import train
 import utils
 import click
 
+from utils1.losses import Plain
+
 
 def parse_args():
     parser = argparse.ArgumentParser("Train the BottomUpTopDown model with a de-biasing method")
@@ -26,7 +28,7 @@ def parse_args():
     parser.add_argument('--num_hid', type=int, default=1024)
     parser.add_argument('--model', type=str, default='baseline0_newatt')
     parser.add_argument('--output', type=str, default='logs/nvidiaexp0')
-    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--batch_size', type=int, default=256)
     parser.add_argument('--seed', type=int, default=1111, help='random seed')
     parser.add_argument('--load_checkpoint_path', type=str, default=None)
     args = parser.parse_args()
@@ -65,7 +67,10 @@ def main():
 
     # Build the model using the original constructor
     constructor = 'build_%s' % args.model
-    model = getattr(base_model, constructor)(train_dset, args.num_hid).cuda()
+    model, m_model = getattr(base_model, constructor)(train_dset, args.num_hid)
+    model = model.cuda()
+    m_model = m_model.cuda()
+    loss_fn = Plain()
     genb = GenB(num_hid=1024, dataset=train_dset).cuda()
     discriminator = Discriminator(num_hid=1024, dataset=train_dset).cuda()
     if dataset=='cpv1':
@@ -96,7 +101,7 @@ def main():
     eval_loader = DataLoader(eval_dset, batch_size, shuffle=False, num_workers=0)
 
     print("Starting training...")
-    train(model, genb, discriminator, train_loader, eval_loader, args,qid2type)
+    train(model, m_model, loss_fn, genb, discriminator, train_loader, eval_loader, args,qid2type)
 
 if __name__ == '__main__':
     main()

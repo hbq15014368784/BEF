@@ -133,3 +133,7 @@ def load_obj_tsv(fname, topk=None):
     elapsed_time = time.time() - start_time
     print("Loaded %d images in file %s in %d seconds." % (len(data), fname, elapsed_time))
     return data
+
+
+def json_keys2int(x):
+    return {int(k): v for k, v in x.items()}

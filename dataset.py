@@ -136,6 +136,29 @@ def _load_dataset(dataroot, name, img_id2val, dataset):
         entries.append(_create_entry(img_idx, question, answer))
     return entries
 
+def _load_margin(cache_path, name, entries):
+    """ Load answer margin per question type.
+    """
+    print('{}_margin.json'.format(name))
+    mask_path = os.path.join(cache_path, 'cp-cache', '{}_margin.json'.format(name))
+    qt_dict = json.load(open(mask_path, 'r'))
+    #print(qt_dict.keys())
+    for qt in qt_dict:
+        ans_num_dict = utils.json_keys2int(qt_dict[qt])
+        ans = torch.tensor(list(ans_num_dict.keys()), dtype=torch.int64)
+        portion = torch.tensor(list(ans_num_dict.values()), dtype=torch.float32)
+        qt_dict[qt] = (ans, portion)
+
+    mask_path = os.path.join(cache_path, 'cp-cache', '{}_freq.json'.format(name))
+    qt_dict_freq = json.load(open(mask_path, 'r'))
+
+    for qt in qt_dict_freq:
+        ans_num_dict = utils.json_keys2int(qt_dict_freq[qt])
+        ans = torch.tensor(list(ans_num_dict.keys()), dtype=torch.int64)
+        portion = torch.tensor(list(ans_num_dict.values()), dtype=torch.float32)
+        qt_dict_freq[qt] = (ans, portion)
+
+    return qt_dict, qt_dict_freq
 
 class VQAFeatureDataset(Dataset):
     def __init__(self, name, dictionary, dataroot='data', dataset='cpv2',
@@ -179,6 +202,8 @@ class VQAFeatureDataset(Dataset):
             self.image_id2ix = None
 
         self.entries = _load_dataset(dataroot, name, self.image_id2ix, dataset=dataset)
+        self.margins, self.freq = _load_margin(dataroot, name, self.entries)
+
         if cache_image_features:
             image_to_fe = {}
             for entry in tqdm(self.entries, ncols=100, desc="caching-features"):
@@ -268,10 +293,28 @@ class VQAFeatureDataset(Dataset):
         labels = answer['labels']
         scores = answer['scores']
         target = torch.zeros(self.num_ans_candidates)
+
+        q_type = answer['question_type']
+        margin_label, margin_score = self.margins[q_type]
+        freq_label, freq_score = self.freq[q_type]
+
+        betas = [0]
+        torch.set_printoptions(profile="full")
+        idx = 0
+        eff = 1 - torch.pow(betas[idx], freq_score)
+        per0 = (1 - betas[idx]) / eff
+        per0 = per0 / torch.sum(per0) * freq_score.shape[0]
+        per0 = per0.float()
+
+        target_margin = torch.zeros(self.num_ans_candidates)
+        freq_margin0 = torch.zeros(self.num_ans_candidates)
+
         if labels is not None:
             target.scatter_(0, labels.long(), scores.float())
+            target_margin.scatter_(0, margin_label, margin_score)
+            freq_margin0.scatter_(0, freq_label, per0)
 
-        return features, ques, target, q_id
+        return features, ques, target, q_id, target_margin, freq_margin0, q_type
 
     def __len__(self):
         return len(self.entries)

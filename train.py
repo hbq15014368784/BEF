@@ -11,22 +11,22 @@ import torch.nn.functional as F
 
 Tensor = torch.cuda.FloatTensor
 
-def compute_supcon_loss(feats, bias, qtype):
-    gen_grad = torch.clamp(2 * qtype * torch.sigmoid(-2 * qtype * bias.detach()), 0, 1)
+from utils1.losses import Plain
+
+def compute_supcon_loss(feats, qtype):
     tau = 1.0
-    gen_grad = torch.argmax(gen_grad, 1)
-    if isinstance(gen_grad, tuple):
+    if isinstance(qtype, tuple):
       i = 0
       dic = {}
-      for item in gen_grad:
+      for item in qtype:
           if item not in dic:
               dic[item] = i
               i = i + 1
       tau = 1.0
-      gen_grad = torch.tensor([dic[item] for item in qtype]).cuda()
+      qtype = torch.tensor([dic[item] for item in qtype]).cuda()
     feats_filt = F.normalize(feats, dim=1)
-    targets_r = gen_grad.reshape(-1, 1)
-    targets_c = gen_grad.reshape(1, -1)
+    targets_r = qtype.reshape(-1, 1)
+    targets_c = qtype.reshape(1, -1)
     mask = targets_r == targets_c
     mask = mask.float().cuda()
     feats_sim = torch.exp(torch.matmul(feats_filt, feats_filt.T) / tau)
@@ -54,7 +54,7 @@ def calc_genb_loss(logits, bias, labels):
     return loss
 
 
-def train(model, genb, discriminator, train_loader, eval_loader,args,qid2type):
+def train(model, m_model,loss_fn, genb, discriminator, train_loader, eval_loader,args,qid2type):
     torch.autograd.set_detect_anomaly(True)
     num_epochs=args.epochs
     run_eval=args.eval_each_epoch
@@ -77,7 +77,7 @@ def train(model, genb, discriminator, train_loader, eval_loader,args,qid2type):
         train_score = 0
 
         t = time.time()
-        for i, (v, q, a, qid) in tqdm(enumerate(train_loader), ncols=100, desc="Epoch %d" % (epoch + 1), total=len(train_loader)):
+        for i, (v, q, a, qid, mg, f1, type) in tqdm(enumerate(train_loader), ncols=100, desc="Epoch %d" % (epoch + 1), total=len(train_loader)):
             total_step += 1
 
             #########################################
@@ -86,11 +86,16 @@ def train(model, genb, discriminator, train_loader, eval_loader,args,qid2type):
             a = Variable(a).cuda()
             valid = Variable(Tensor(v.size(0), 1).fill_(1.0), requires_grad=False)
             fake = Variable(Tensor(v.size(0), 1).fill_(0.0), requires_grad=False)
+
+            mg = mg.cuda()
+            f1 = f1.cuda()
+            gt = torch.argmax(a, 1)
             #########################################
 
             # get model output
             optim.zero_grad()
-            pred = model(v, q)
+            hidden_, pred = model(v, q)
+            hidden, pred1 = m_model(hidden_, pred, mg, epoch, a)
 
             # train genb
             optim_G.zero_grad()
@@ -123,8 +128,18 @@ def train(model, genb, discriminator, train_loader, eval_loader,args,qid2type):
             genb.train(False)
             pred_g = genb(v, q, gen=False)
 
-            # genb_loss = calc_genb_loss(pred, pred_g, a)
-            genb_loss = compute_supcon_loss(pred, pred_g, a)
+            dict_args = {'margin': mg, 'bias': pred_g, 'hidden': hidden, 'epoch': epoch, 'per': f1}
+
+            ce_loss = -F.log_softmax(pred, dim=-1) * a
+            ce_loss = ce_loss * f1
+            loss = ce_loss.sum(dim=-1).mean() + loss_fn(hidden, a, **dict_args)
+
+            genb_loss = calc_genb_loss(pred, pred_g, a)
+
+            gt = torch.argmax(a, 1)
+
+
+            genb_loss = genb_loss + compute_supcon_loss(hidden_, gt) + loss
             genb_loss.backward()
 
             nn.utils.clip_grad_norm_(model.parameters(), 0.25)
@@ -183,7 +198,7 @@ def evaluate(model, dataloader, qid2type):
     total_number = 0
     total_other = 0 
 
-    for v, q, a, qids in tqdm(dataloader, ncols=100, total=len(dataloader), desc="eval"):
+    for v, q, a, qids, mg, f1, type in tqdm(dataloader, ncols=100, total=len(dataloader), desc="eval"):
         v = Variable(v, requires_grad=False).cuda()
         q = Variable(q, requires_grad=False).cuda()
         pred = model(v, q)

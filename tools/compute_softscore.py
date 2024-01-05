@@ -9,9 +9,12 @@ import pickle as cPickle
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataset import Dictionary
-import utils
+import utils1
 import argparse
 
+
+from collections import Counter, defaultdict
+from scipy.stats import entropy
 
 contractions = {
     "aint": "ain't", "arent": "aren't", "cant": "can't", "couldve":
@@ -168,7 +171,7 @@ def create_ans2label(occurence, name, processed_dir='data/processed'):
         ans2label[answer] = label
         label += 1
 
-    utils.create_dir(processed_dir)
+    utils1.create_dir(processed_dir)
 
     cache_file = os.path.join(processed_dir, name + '_ans2label.pkl')
     cPickle.dump(ans2label, open(cache_file, 'wb'))
@@ -218,7 +221,7 @@ def compute_target(answers_dset, ans2label, name, cache_root):
         })
 
     print(cache_root)
-    utils.create_dir(cache_root)
+    utils1.create_dir(cache_root)
     cache_file = os.path.join(cache_root, name+'_target.pkl')
     print(cache_file)
     with open(cache_file, 'wb') as f:
@@ -237,6 +240,57 @@ def get_question(qid, questions):
         if question['question_id'] == qid:
             return question
 
+def extract_type(answers_dset, name, ans2label, cache_root):
+    """ Extract answer distribution for each question type. """
+    qt_dict = defaultdict(list)
+    for ans_entry in answers_dset:
+        qt = ans_entry['question_type']
+        ans_idxs = []
+        for ans in ans_entry['answers']:
+            ans = ans['answer']
+            ans_idx = ans2label.get(ans, None)
+            if ans_idx:
+                ans_idxs.append(ans_idx)
+        qt_dict[qt].extend(ans_idxs) # counting later
+
+    number = 0
+    # count answers for each question type
+    for qt in qt_dict:
+        ans_num_dict = Counter(qt_dict[qt])
+        ans_num_dict = {k: v
+            for k, v in ans_num_dict.items() if v >= 50}
+        total_num = sum(ans_num_dict.values())
+        for ans, ans_num in ans_num_dict.items():
+            ans_num_dict[ans] = float(ans_num) / total_num
+
+        values = np.array(list(ans_num_dict.values()), dtype=np.float32)
+        if entropy(values + 1e-6, base=2) >= 4.5:
+            qt_dict[qt] = {k: 0.0 for k in ans_num_dict}
+            number += 1
+        else:
+            qt_dict[qt] = ans_num_dict
+    cache_file = os.path.join(cache_root, name + '_margin.json')
+    json.dump(qt_dict, open(cache_file, 'w'))
+    qt_dict = defaultdict(list)
+    for ans_entry in answers_dset:
+        qt = ans_entry['question_type']
+        ans_idxs = []
+        for ans in ans_entry['answers']:
+            ans = ans['answer']
+            ans_idx = ans2label.get(ans, None)
+            if ans_idx:
+                ans_idxs.append(ans_idx)
+        qt_dict[qt].extend(ans_idxs)  # counting later
+
+
+    for qt in qt_dict:
+        ans_num_dict = Counter(qt_dict[qt])
+        # ans_num_dict = {k: v
+        #     for k, v in ans_num_dict.items() if v >= 50}
+
+        qt_dict[qt] = ans_num_dict
+    cache_file = os.path.join(cache_root, name + '_freq.json')
+    json.dump(qt_dict, open(cache_file, 'w'))
 
 def load_cp():
     train_answer_file = "data/vqacp_v2_train_annotations.json"
@@ -256,6 +310,8 @@ def load_cp():
     compute_target(train_answers, ans2label, 'train', "data/cp-cache")
     compute_target(val_answers, ans2label, 'val', "data/cp-cache")
     # compute_target(v2_val_answers, ans2label, 'v2_val', "data/cp-cache")
+    extract_type(train_answers, 'train', ans2label, "data/cp-cache")
+    extract_type(val_answers, 'val', ans2label, "data/cp-cache")
 
 def load_cp_v1():
     train_answer_file = "data/vqacp_v1_train_annotations.json"
