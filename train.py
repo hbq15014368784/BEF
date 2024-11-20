@@ -26,6 +26,54 @@ def calc_genb_loss(logits, bias, labels):
     loss *= labels.size(1)
     return loss
 
+llh_shift = torch.tensor(5.0)
+# def get_predictive_entropy_over_concepts(log_likelihoods, semantic_set_ids):
+#     """Compute the semantic entropy"""
+#     mean_across_models = torch.logsumexp(log_likelihoods, dim=0) - torch.log(torch.tensor(log_likelihoods.shape[0]))
+#     # This is ok because all the models have the same semantic set ids
+#     semantic_set_ids = semantic_set_ids[0]
+#     entropies = []
+#     for row_index in range(mean_across_models.shape[0]):
+#         aggregated_likelihoods = []
+#         row = mean_across_models[row_index]
+#         semantic_set_ids_row = semantic_set_ids[row_index]
+#         for semantic_set_id in torch.unique(semantic_set_ids_row):
+#             aggregated_likelihoods.append(
+#                 torch.logsumexp(row[semantic_set_ids_row == semantic_set_id], dim=0))
+#         aggregated_likelihoods = torch.tensor(aggregated_likelihoods) - llh_shift
+#         entropy = - torch.sum(aggregated_likelihoods, dim=0) / torch.tensor(aggregated_likelihoods.shape[0])
+#         entropies.append(entropy)
+#
+#     return torch.tensor(entropies)
+
+def get_predictive_entropy_over_concepts(log_likelihoods, semantic_set_ids):
+    """Compute the semantic entropy"""
+    mean_across_models = torch.logsumexp(log_likelihoods, dim=0) - torch.log(torch.tensor(log_likelihoods.shape[0]))
+    semantic_set_ids = semantic_set_ids[0]
+
+    entropies = []
+
+    for row_index in range(mean_across_models.shape[0]):
+        row = mean_across_models[row_index]
+        semantic_set_ids_row = semantic_set_ids[row_index]
+        aggregated_likelihoods = []
+
+        for semantic_set_id in torch.unique(semantic_set_ids_row):
+            aggregated_likelihoods.append(
+                torch.logsumexp(row[semantic_set_ids_row == semantic_set_id], dim=0)
+            )
+
+        aggregated_likelihoods = torch.tensor(aggregated_likelihoods, requires_grad=True) - llh_shift
+
+        entropy = -torch.sum(aggregated_likelihoods) / torch.tensor(len(aggregated_likelihoods), dtype=torch.float32)
+        entropies.append(entropy)
+
+    return torch.tensor(entropies, requires_grad=True)
+
+def compute_entropy( predictions):
+    probabilities = torch.softmax(predictions, dim=-1)
+    entropies = -torch.sum(probabilities * torch.log(probabilities + 1e-10), dim=-1)
+    return entropies
 
 def train(model, genb, discriminator, train_loader, eval_loader,args,qid2type):
     torch.autograd.set_detect_anomaly(True)
@@ -63,7 +111,7 @@ def train(model, genb, discriminator, train_loader, eval_loader,args,qid2type):
 
             # get model output
             optim.zero_grad()
-            pred = model(v, q)
+            _, prer, pred = model(v, q)
 
             # train genb
             optim_G.zero_grad()
@@ -99,6 +147,20 @@ def train(model, genb, discriminator, train_loader, eval_loader,args,qid2type):
             genb_loss = calc_genb_loss(pred, pred_g, a)
             genb_loss.backward()
 
+            # # compute proco loss
+            # with torch.cuda.amp.autocast():
+            #     proco_logists = proco(prer, a)
+
+            # genb_loss = F.binary_cross_entropy_with_logits(pred, a) + F.binary_cross_entropy_with_logits(proco_logists, a)
+
+            # genb_loss = F.binary_cross_entropy_with_logits(pred, a)
+            # print("genb_loss: " + str(genb_loss.item()))
+            # genb_loss.backward()
+
+            # Compute the semantic entropy
+            # genb_loss = get_predictive_entropy_over_concepts(pred, a).sum()
+            # genb_loss.backward()
+
             nn.utils.clip_grad_norm_(model.parameters(), 0.25)
             optim.step()
 
@@ -116,7 +178,10 @@ def train(model, genb, discriminator, train_loader, eval_loader,args,qid2type):
 
         if run_eval:
             model.train(False)
-            results = evaluate(model, eval_loader, qid2type)
+            if args.dataset=='RAD':
+                results = evaluate(model, eval_loader, None)
+            else:
+                results = evaluate(model, eval_loader, qid2type)
             results["epoch"] = epoch
             results["step"] = total_step
             results["train_loss"] = total_loss
@@ -158,7 +223,8 @@ def evaluate(model, dataloader, qid2type):
     for v, q, a, qids in tqdm(dataloader, ncols=100, total=len(dataloader), desc="eval"):
         v = Variable(v, requires_grad=False).cuda()
         q = Variable(q, requires_grad=False).cuda()
-        pred = model(v, q)
+        # pred, _ = model(v, q)
+        _, _, pred = model(v, q)
         batch_score = compute_score_with_logits(pred, a.cuda()).cpu().numpy().sum(1)
         score += batch_score.sum()
         upper_bound += (a.max(1)[0]).sum()

@@ -42,6 +42,7 @@ class NewAttention(nn.Module):
         v: [batch, k, vdim]
         q: [batch, qdim]
         """
+        # print(f"Shape of v: {v.size()}")
         logits = self.logits(v, q)
         return logits
 

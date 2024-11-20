@@ -1,1 +1,8 @@
 data/
+data_RAD
+data_RAD.zip
+logs
+visualization/question_types.npy
+visualization/question_types_genb.npy
+visualization/saved_features.npy
+visualization/saved_features_genb.npy

@@ -2,6 +2,9 @@ from __future__ import print_function
 import torch.nn as nn
 from torch.nn.utils.weight_norm import weight_norm
 
+import torch
+import torch.nn.functional as F
+
 class MLP(nn.Module):
 
     def __init__(self,
@@ -52,3 +55,47 @@ class FCNet(nn.Module):
             x = self.drop(x)
         
         return self.main(x)
+
+class KANLayer(nn.Module):
+    """ A basic layer for KAN 2.0 Network that uses Kolmogorov-Arnold expression """
+
+    def __init__(self, in_dim, out_dim, degree=3):
+        super(KANLayer, self).__init__()
+
+        # KA layer could use multiple monomials for higher-dimensional non-linearities
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.degree = degree
+
+        # Define weights for monomials
+        self.weights = nn.Parameter(torch.randn(in_dim, out_dim) * 0.02)
+        self.bias = nn.Parameter(torch.randn(out_dim) * 0.02)
+
+    def forward(self, x):
+        # A simple polynomial form f(x) = sum( c_i * x^degree_i )
+        x_poly = x
+        result = torch.matmul(x_poly, self.weights) + self.bias
+
+        return F.relu(result)
+
+
+class KAN2_0(nn.Module):
+    """KAN 2.0 network inspired by Kolmogorov-Arnold expression"""
+
+    def __init__(self, dims, drop=0.0, degree=3):
+        super(KAN2_0, self).__init__()
+
+        layers = []
+        for i in range(len(dims) - 2):
+            in_dim = dims[i]
+            out_dim = dims[i + 1]
+            layers.append(KANLayer(in_dim, out_dim, degree))
+            layers.append(nn.Dropout(drop))
+
+        layers.append(KANLayer(dims[-2], dims[-1], degree))
+
+        self.main = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.main(x)
+

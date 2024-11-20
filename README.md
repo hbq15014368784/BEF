@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Generative Bias for Robust Visual Question Answering
 
 This repo contains the PyTorch code release for our paper GenB: [**Generative Bias for Robust Visual Question Answering**](https://arxiv.org/abs/2208.00690) (CVPR 2023).
@@ -45,3 +46,7 @@ If you find this code useful, please cite our paper:
 }
 ```
 
+=======
+# devias
+去偏方法的研究代码版本管理
+>>>>>>> 043d563a7f404d5f57d1afd1763e0cb1122d05b7
