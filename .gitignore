@@ -1,1 +1,11 @@
 data/
+.vscode/
+.idea/
+data_RAD/
+logs/
+data_RAD.zip
+*.pth
+*.pt
+*.pkl
+*.npy
+*.json

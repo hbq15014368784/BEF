@@ -98,66 +98,78 @@ def train(model, m_model,loss_fn, genb, discriminator, train_loader, eval_loader
             # get model output
             optim.zero_grad()
             hidden_, pred = model(v, q)
-            hidden, pred1 = m_model(hidden_, pred, mg, epoch, a)
+            hidden, hidden2,  pred1 = m_model(hidden_, pred, mg, epoch, a)
             dict_args = {'margin': mg, 'bias': bias, 'hidden': hidden, 'epoch': epoch, 'per': f1}
 
-            # train genb
-            optim_G.zero_grad()
-            optim_D.zero_grad()
+            # # train genb
+            # optim_G.zero_grad()
+            # optim_D.zero_grad()
 
-            pred_g = genb(v, q, gen=True)
-            g_loss = F.binary_cross_entropy_with_logits(pred_g, a, reduction='none').mean()
-            g_loss *= a.size(1)
+            # pred_g = genb(v, q, gen=True)
+            # g_loss = F.binary_cross_entropy_with_logits(pred_g, a, reduction='none').mean()
+            # g_loss *= a.size(1)
 
-            vae_preds = discriminator(pred_g)
-            main_preds = discriminator(pred)
+            # vae_preds = discriminator(pred_g)
+            # main_preds = discriminator(pred)
 
-            g_distill = kld(pred_g, pred.detach())
-            dsc_loss = bce(vae_preds, valid) + bce(main_preds, valid)
+            # g_distill = kld(pred_g, pred.detach())
+            # dsc_loss = bce(vae_preds, valid) + bce(main_preds, valid)
 
-            g_loss = g_loss + dsc_loss + g_distill*5
-            g_loss.backward(retain_graph=True)
-            nn.utils.clip_grad_norm_(genb.parameters(), 0.25)
+            # g_loss = g_loss + dsc_loss + g_distill*5
+            # g_loss.backward(retain_graph=True)
+            # nn.utils.clip_grad_norm_(genb.parameters(), 0.25)
 
-            # done training genb
+            # # done training genb
 
-            # train the discriminator
-            dsc_loss = bce(vae_preds, fake) + bce(main_preds, valid)
-            dsc_loss.backward(retain_graph=True)
-            optim_G.step()
-            optim_D.step()
-            # done training the discriminator
+            # # train the discriminator
+            # dsc_loss = bce(vae_preds, fake) + bce(main_preds, valid)
+            # dsc_loss.backward(retain_graph=True)
+            # optim_G.step()
+            # optim_D.step()
+            # # done training the discriminator
 
-            # use genb to train the robust model
-            genb.train(False)
-            pred_g = genb(v, q, gen=False)
-
-
-            ce_loss = -F.log_softmax(pred, dim=-1) * a
-            ce_loss = ce_loss * f1
-            loss = ce_loss.sum(dim=-1).mean() + loss_fn(hidden, a, **dict_args)
-
-            genb_loss = calc_genb_loss(pred, pred_g, a)
-
-            gt = torch.argmax(a, 1)
+            # # use genb to train the robust model
+            # genb.train(False)
+            # pred_g = genb(v, q, gen=False)
 
 
-            genb_loss = genb_loss + compute_supcon_loss(hidden_, gt) + loss
-            genb_loss.backward()
+            # ce_loss = -F.log_softmax(pred, dim=-1) * a
+            # ce_loss = ce_loss * f1
+            # loss = ce_loss.sum(dim=-1).mean() + loss_fn(hidden, a, **dict_args)
+
+            # genb_loss = calc_genb_loss(pred, pred_g, a)
+
+            # gt = torch.argmax(a, 1)
+
+
+            # genb_loss = genb_loss + compute_supcon_loss(hidden_, gt) + loss
+            # genb_loss.backward()
+
+            # nn.utils.clip_grad_norm_(model.parameters(), 0.25)
+            # optim.step()
+
+            # genb.train(True)
+            # total_loss += genb_loss.item() * q.size(0)
+
+            # ce_logits = F.normalize(pred)
+            # pred_l = F.normalize(pred1)
+            # pred = (ce_logits + pred_l) / 2
+
+            # batch_score = compute_score_with_logits(pred, a.data).sum()
+            # train_score += batch_score
+
+            loss = F.binary_cross_entropy_with_logits(pred, a)
+            loss.backward()
 
             nn.utils.clip_grad_norm_(model.parameters(), 0.25)
             optim.step()
 
-            genb.train(True)
-            total_loss += genb_loss.item() * q.size(0)
+            total_loss += loss.item() * q.size(0)
 
-            ce_logits = F.normalize(pred)
-            pred_l = F.normalize(pred1)
-            pred = (ce_logits + pred_l) / 2
+            pred = F.normalize(pred)
 
             batch_score = compute_score_with_logits(pred, a.data).sum()
             train_score += batch_score
-
 
         total_loss /= len(train_loader.dataset)
         train_score = 100 * train_score / len(train_loader.dataset)
@@ -211,11 +223,11 @@ def evaluate(model, m_model, dataloader, qid2type):
         q = Variable(q, requires_grad=False).cuda()
         mg = mg.cuda()
         hidden_, pred = model(v, q)
-        hidden, pred_m = m_model(hidden_, pred, mg, 0,  a)
+        # hidden, hidden2, pred_m = m_model(hidden_, pred, mg, 0,  a)
 
-        pred = F.softmax(F.normalize(pred) / config.temp, 1)
-        pred_m = F.softmax(F.normalize(pred_m), 1)
-        pred = config.alpha * pred_m + (1 - config.alpha) * pred
+        # pred = F.softmax(F.normalize(pred) / config.temp, 1)
+        # pred_m = F.softmax(F.normalize(pred_m), 1)
+        # pred = config.alpha * pred_m + (1 - config.alpha) * pred
 
         batch_score = compute_score_with_logits(pred, a.cuda()).cpu().numpy().sum(1)
         score += batch_score.sum()

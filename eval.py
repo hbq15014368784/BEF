@@ -12,6 +12,9 @@ from torch.autograd import Variable
 
 from tqdm import tqdm
 
+import torch.nn.functional as F
+
+import utils1.config as config
 
 
 def compute_score_with_logits(logits, labels):
@@ -22,7 +25,7 @@ def compute_score_with_logits(logits, labels):
     return scores
 
 
-def evaluate(model, dataloader, qid2type):
+def evaluate(model, m_model, dataloader, qid2type):
     score = 0
     upper_bound = 0
     score_yesno = 0
@@ -30,12 +33,19 @@ def evaluate(model, dataloader, qid2type):
     score_other = 0
     total_yesno = 0
     total_number = 0
-    total_other = 0 
+    total_other = 0
 
-    for v, q, a, qids in tqdm(dataloader, ncols=100, total=len(dataloader), desc="eval"):
+    for v, q, a, qids, bias, mg, f1, type in tqdm(dataloader, ncols=100, total=len(dataloader), desc="eval"):
         v = Variable(v, requires_grad=False).cuda()
         q = Variable(q, requires_grad=False).cuda()
-        pred = model(v, q)
+        mg = mg.cuda()
+        hidden_, pred_l = model(v, q)
+        hidden, pred_m = m_model(hidden_, pred_l, mg, 0,  a)
+
+        pred_l = F.softmax(F.normalize(pred_l) / config.temp, 1)
+        pred_m = F.softmax(F.normalize(pred_m), 1)
+        pred = config.alpha * pred_m + (1 - config.alpha) * pred_l
+
         batch_score = compute_score_with_logits(pred, a.cuda()).cpu().numpy().sum(1)
         score += batch_score.sum()
         upper_bound += (a.max(1)[0]).sum()
@@ -95,7 +105,8 @@ def main():
 
     # Build the model using the original constructor
     constructor = 'build_%s' % args.model
-    model = getattr(base_model, constructor)(eval_dset, args.num_hid).cuda()
+    # model = getattr(base_model, constructor)(eval_dset, args.num_hid).cuda()
+    model, m_model = getattr(base_model, constructor)(eval_dset, args.num_hid)
 
     with open('util/qid2type_%s.json'%args.dataset,'r') as f:
         qid2type=json.load(f)
@@ -105,7 +116,11 @@ def main():
     print('Loaded Model!')
 
     model=model.cuda()
-    model.eval()
+    m_model=m_model.cuda()
+
+    model.train(False)
+    m_model.train(False)
+
     batch_size = args.batch_size
 
     torch.manual_seed(args.seed)
@@ -113,7 +128,7 @@ def main():
     torch.backends.cudnn.benchmark = True
 
     eval_loader = DataLoader(eval_dset, batch_size, shuffle=False, num_workers=0)
-    eval_score, bound, yn, other, num = evaluate(model, eval_loader, qid2type)
+    eval_score, bound, yn, other, num = evaluate(model, m_model, eval_loader, qid2type)
     print('\teval score: %.2f (%.2f)' % (100 * eval_score, 100 * bound))
     print('\tyn score: %.2f other score: %.2f num score: %.2f' % (100 * yn, 100 * other, 100 * num))
 

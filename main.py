@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument('--num_hid', type=int, default=1024)
     parser.add_argument('--model', type=str, default='baseline0_newatt')
     parser.add_argument('--output', type=str, default='logs/nvidiaexp0')
-    parser.add_argument('--batch_size', type=int, default=256)
+    parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--seed', type=int, default=1111, help='random seed')
     parser.add_argument('--load_checkpoint_path', type=str, default=None)
     args = parser.parse_args()

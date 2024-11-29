@@ -10,7 +10,11 @@ from torch.autograd import Variable
 
 import torch.nn.init as init
 
+from FSRU import FSRU
+
 import math
+
+pi = 3.1415926535
 
 def kaiming_init(m):
     if isinstance(m, (nn.Linear, nn.Conv2d)):
@@ -33,7 +37,6 @@ def normal_init(m, mean, std):
         if m.bias.data is not None:
             m.bias.data.zero_()
 
-
 class BaseModel(nn.Module):
     def __init__(self, w_emb, q_emb, v_att, q_net, v_net, classifier):
         super(BaseModel, self).__init__()
@@ -43,6 +46,7 @@ class BaseModel(nn.Module):
         self.q_net = q_net
         self.v_net = v_net
         self.classifier = classifier
+        self.sp2freq = FSRU(d_model=1024, seq_len=14, dropout=0., mlp_ratio=4., num_filter=2, num_class=2, num_layer=1)
 
     def forward(self, v, q):
         """Forward
@@ -51,21 +55,34 @@ class BaseModel(nn.Module):
         q: [batch_size, seq_length]
         return: logits
         """
-        w_emb = self.w_emb(q)
-        q_emb, _ = self.q_emb(w_emb)  # [batch, q_dim]
+        # w_emb = self.w_emb(q)
+        # q_emb, _ = self.q_emb(w_emb)  # [batch, q_dim]
 
-        att = self.v_att(v, q_emb)
+        # att = self.v_att(v, q_emb)
 
-        att = nn.functional.softmax(att, 1)
-        v_emb = (att * v).sum(1)  # [batch, v_dim]      
+        # att = nn.functional.softmax(att, 1)
+        # v_emb = (att * v).sum(1)  # [batch, v_dim]      
 
-        q_repr = self.q_net(q_emb)
-        v_repr = self.v_net(v_emb)
+        # print("q_emb:", q_emb.shape)
+        # print("v_emb:", v_emb.shape)
+        # q_repr = self.q_net(q_emb)
+        # v_repr = self.v_net(v_emb)
+
+        # joint_repr = v_repr * q_repr  # [512, 1024]
+
+        # # print("joint_repr.shape:", joint_repr.shape)
+
+        # logits = self.classifier(joint_repr)
+
+        # return joint_repr, logits
+
+
+        text, image, logits, f = self.sp2freq(q, v)
         
-        joint_repr = v_repr * q_repr
-        logits = self.classifier(joint_repr)
 
-        return joint_repr, logits
+        logits = self.classifier(f)
+
+        return f, logits
 
 
 class GenB(nn.Module):
@@ -213,7 +230,38 @@ class ArcMarginProduct(nn.Module):
             phi = torch.where(cosine > self.th, phi, cosine - self.mm)
 
         output = phi * self.s
-        return output, cosine
+
+        # # compute frequency margin
+        # m = 1 - m
+        # self.cos_m = torch.cos(m)
+        # self.sin_m = torch.sin(m)
+        # self.th = torch.cos(math.pi - m)
+        # self.mm = torch.sin(math.pi - m) * m
+        # sine = torch.sqrt((1.0 - torch.pow(cosine, 2)).clamp(0, 1))
+        # phi = cosine * self.cos_m - sine * self.sin_m
+        # if self.easy_margin:
+        #     phi = torch.where(cosine > 0, phi, cosine)
+        # else:
+        #     phi = torch.where(cosine > self.th, phi, cosine - self.mm)
+        #
+        # output = phi * self.s
+
+        # compute nandu margin
+        margin = 1 - margin
+        self.cos_m2 = torch.cos(margin)
+        self.sin_m2 = torch.sin(margin)
+        self.th2 = torch.cos(math.pi - margin)
+        self.mm2 = torch.sin(math.pi - margin) * margin
+        sine2 = torch.sqrt((1.0 - torch.pow(cosine, 2)).clamp(0, 1))
+        phi2 = cosine * self.cos_m2 - sine2 * self.sin_m2
+        if self.easy_margin:
+            phi2 = torch.where(cosine > 0, phi2, cosine)
+        else:
+            phi2 = torch.where(cosine > self.th2, phi2, cosine - self.mm2)
+
+        output_m2 = phi2 * self.s
+
+        return output, output_m2, cosine
 
 
 def build_baseline0(dataset, num_hid):
