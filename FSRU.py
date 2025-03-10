@@ -108,31 +108,133 @@ class Text2ImageGate(nn.Module):
         text = text.permute(0, 2, 1)  # (B, 1, C)
         return text
 
-class ImageFrequencySelection(nn.Module):
-    def __init__(self, s, d_model):
-        super(ImageFrequencySelection, self).__init__()
+# class ImageFrequencySelection(nn.Module):
+#     def __init__(self, s, d_model):
+#         super(ImageFrequencySelection, self).__init__()
 
-        self.text_gate = Text2ImageGate(s, d_model)
+#         self.text_gate = Text2ImageGate(s, d_model)
 
-    def forward(self, image, text):
-        """
-        image: (B, N, C)  N=h*w  in frequency domain
-        """
-        text_gate = self.text_gate(text)
-        image = image * text_gate
-        return image
+#     def forward(self, image, text):
+#         """
+#         image: (B, N, C)  N=h*w  in frequency domain
+#         """
+#         text_gate = self.text_gate(text)
+#         image = image * text_gate
+#         return image
+
+# class TextFrequencySelection(nn.Module):
+#     def __init__(self, n, d_model):
+#         super(TextFrequencySelection, self).__init__()
+
+#         self.image_gate = Image2TextGate(n, d_model)
+
+#     def forward(self, text, image):
+#         image_gate = self.image_gate(image)
+#         text = text * image_gate
+#         return text
 
 class TextFrequencySelection(nn.Module):
     def __init__(self, n, d_model):
-        super(TextFrequencySelection, self).__init__()
+        super().__init__()
+        # frequency attention
+        self.freq_attention = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.LayerNorm(d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, d_model),
+            nn.Sigmoid()
+        )
+        
+        # cross-modal gate
+        self.cross_gate = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.LayerNorm(d_model),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, text_freq, image_freq):
+        """
+        Args:
+            text_freq: [B, S, D] 复数张量
+            image_freq: [B, N, D] 复数张量
+        Returns:
+            enhanced_text_freq: [B, S, D] 复数张量
+        """
+        # calculate frequency magnitude
+        text_mag = torch.abs(text_freq)  # [B, S, D]
+        image_mag = torch.abs(image_freq)  # [B, N, D]
+        
+        # calculate global representation of image features
+        image_global = torch.mean(image_mag, dim=1, keepdim=True)  # [B, 1, D]
+        
+        # concatenate features
+        freq_concat = torch.cat([
+            text_mag,
+            image_global.expand(-1, text_mag.size(1), -1)
+        ], dim=-1)  # [B, S, D*2]
+        
+        # calculate frequency attention weights
+        freq_weight = self.freq_attention(freq_concat)  # [B, S, D]
+        
+        # calculate cross-modal gate
+        gate = self.cross_gate(freq_concat)  # [B, S, D]
+        
+        # enhance text frequency spectrum
+        enhanced_freq = text_freq * freq_weight * gate
+        
+        return enhanced_freq
 
-        self.image_gate = Image2TextGate(n, d_model)
-
-    def forward(self, text, image):
-        image_gate = self.image_gate(image)
-        text = text * image_gate
-        return text
-
+class ImageFrequencySelection(nn.Module):
+    def __init__(self, s, d_model):
+        super().__init__()
+        # frequency attention
+        self.freq_attention = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.LayerNorm(d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, d_model),
+            nn.Sigmoid()
+        )
+        
+        # cross-modal gate
+        self.cross_gate = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.LayerNorm(d_model),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, image_freq, text_freq):
+        """
+        Args:
+            image_freq: [B, N, D] 复数张量
+            text_freq: [B, S, D] 复数张量
+        Returns:
+            enhanced_image_freq: [B, N, D] 复数张量
+        """
+        # calculate frequency magnitude
+        image_mag = torch.abs(image_freq)  # [B, N, D]
+        text_mag = torch.abs(text_freq)  # [B, S, D]
+        
+        # calculate global representation of text features
+        text_global = torch.mean(text_mag, dim=1, keepdim=True)  # [B, 1, D]
+        
+        # concatenate features
+        freq_concat = torch.cat([
+            image_mag,
+            text_global.expand(-1, image_mag.size(1), -1)
+        ], dim=-1)  # [B, N, D*2]
+        
+        # calculate frequency attention weights
+        freq_weight = self.freq_attention(freq_concat)  # [B, N, D]
+        
+        # calculate cross-modal gate
+        gate = self.cross_gate(freq_concat)  # [B, N, D]
+        
+        # enhance image frequency spectrum
+        enhanced_freq = image_freq * freq_weight * gate
+        
+        return enhanced_freq
+    
 class AddNorm(nn.Module):
     def __init__(self, d_model, dropout=0.):
         super(AddNorm, self).__init__()
@@ -337,14 +439,15 @@ class FSRU(nn.Module):
         image = image + self.img_pos_embed
         image = self.img_pos_drop(image)  # [B, 36, d_model]
 
-        print("text:", text.shape)
-        print("image:", image.shape)
+        # print("text:", text.shape)
+        # print("image:", image.shape)
 
         text, image = self.FourierTransormer(text, image)
 
         text = torch.max(text, dim=1)[0]
         image = torch.max(image, dim=1)[0]
 
+        # f = text * image
         f = self.fusion(text, image)  # (batch, d_model)
 
         outputs = self.mlp(f)

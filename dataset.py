@@ -204,26 +204,61 @@ class VQAFeatureDataset(Dataset):
         self.entries = _load_dataset(dataroot, name, self.image_id2ix, dataset=dataset)
         self.margins, self.freq = _load_margin(dataroot, name, self.entries)
 
+        self.default_margin = (1.0, 0.5)
+
         if cache_image_features:
             image_to_fe = {}
+            image_to_spatial = {}  # 新增空间特征缓存
             for entry in tqdm(self.entries, ncols=100, desc="caching-features"):
                 img_id = entry["image_id"]
                 if img_id not in image_to_fe:
                     if use_hdf5:
                         if img_id in self.image_id2ix['train']:
-                            fe = np.array(self.features['train'][self.image_id2ix['train'][img_id]])
+                            split = 'train'
+                            idx = self.image_id2ix['train'][img_id]
                         else:
-                            fe = np.array(self.features['val'][self.image_id2ix['val'][img_id]])
+                            split = 'val'
+                            idx = self.image_id2ix['val'][img_id]
+                            
+                        # 加载视觉特征和空间特征
+                        fe = np.array(self.features[split][idx])
+                        sp = np.array(self.spatial[split][idx])  # 空间特征
+                        
                         fe = torch.from_numpy(fe)
-                    if use_hdf5:
-                        self.hf_train.close()
-                        self.hf_test.close()
+                        sp = torch.from_numpy(sp)  # 转换为tensor
+                        
+                        image_to_fe[img_id] = fe
+                        image_to_spatial[img_id] = sp  # 缓存空间特征
+
+
+
+
+
+                    #     if img_id in self.image_id2ix['train']:
+                    #         fe = np.array(self.features['train'][self.image_id2ix['train'][img_id]])
+                    #     else:
+                    #         fe = np.array(self.features['val'][self.image_id2ix['val'][img_id]])
+                    #     fe = torch.from_numpy(fe)
+                    # if use_hdf5:
+                    #     self.hf_train.close()
+                    #     self.hf_test.close()
                     else:
-                        fe=torch.load('data/rcnn_feature/'+str(img_id)+'.pth')['image_feature']
-                    image_to_fe[img_id]=fe
+                        features = torch.load('data/rcnn_feature/'+str(img_id)+'.pth')
+                        image_to_fe[img_id] = features['image_feature']
+                        image_to_spatial[img_id] = features['spatial_feature']  # 假设文件中包含空间特征
+                        
+                        # fe=torch.load('data/rcnn_feature/'+str(img_id)+'.pth')['image_feature']
+
+                    # image_to_fe[img_id]=fe
+
             self.image_to_fe = image_to_fe
+            self.image_to_spatial = image_to_spatial  # 保存空间特征缓存
+        
+            # self.image_to_fe = image_to_fe
         else:
+            # self.image_to_fe = None
             self.image_to_fe = None
+            self.image_to_spatial = None
 
         self.tokenize()
         self.tensorize()
@@ -276,6 +311,7 @@ class VQAFeatureDataset(Dataset):
         
         if self.image_to_fe is not None:
             features = self.image_to_fe[entry["image_id"]]
+            spatials = self.image_to_spatial[img_id]
         elif self.use_hdf5:
             if img_id in self.image_id2ix['train']:
                 split = 'train'
@@ -283,9 +319,13 @@ class VQAFeatureDataset(Dataset):
                 split = 'val'
             features = np.array(self.features[split][entry['img_idx']])
             features = torch.from_numpy(features)
+            spatials = np.array(self.spatial[split][entry['img_idx']])  # 获取空间特征
+            spatials = torch.from_numpy(spatials)
         else:
-            features = torch.load('data/rcnn_feature/' + str(entry["image_id"]) + '.pth')['image_feature']
-
+            # features = torch.load('data/rcnn_feature/' + str(entry["image_id"]) + '.pth')['image_feature']
+            data = torch.load('data/rcnn_feature/' + str(img_id) + '.pth')
+            features = data['image_feature']
+            spatials = data['spatial_feature']
         q_id=entry['question_id']
         ques = entry['q_token']
         ques_mask=entry['q_token_mask']
@@ -296,8 +336,8 @@ class VQAFeatureDataset(Dataset):
 
         q_type = answer['question_type']
         margin_label, margin_score = self.margins[q_type]
-        freq_label, freq_score = self.freq[q_type]
-
+        freq_label, freq_score = self.freq[q_type]  
+            
         betas = [0]
         torch.set_printoptions(profile="full")
         idx = 0
@@ -316,7 +356,7 @@ class VQAFeatureDataset(Dataset):
 
         bias = entry['bias'] if 'bias' in entry else 0
 
-        return features, ques, target, q_id, bias, target_margin, freq_margin0, q_type
+        return features, spatials, ques, target, q_id, bias, target_margin, freq_margin0, q_type
     def __len__(self):
         return len(self.entries)
 

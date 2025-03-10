@@ -310,6 +310,8 @@ def load_cp():
     compute_target(train_answers, ans2label, 'train', "data/cp-cache")
     compute_target(val_answers, ans2label, 'val', "data/cp-cache")
     # compute_target(v2_val_answers, ans2label, 'v2_val', "data/cp-cache")
+    
+    # tool for margin loss
     extract_type(train_answers, 'train', ans2label, "data/cp-cache")
     extract_type(val_answers, 'val', ans2label, "data/cp-cache")
 
@@ -341,6 +343,10 @@ def load_v2():
     ans2label = create_ans2label(occurence, 'trainval', "data/cache")
     compute_target(train_answers, ans2label, 'train', "data/cache")
     compute_target(val_answers, ans2label, 'val', "data/cache")
+
+    # tool for margin loss
+    extract_type(train_answers, 'train', ans2label, "data/cache")
+    extract_type(val_answers, 'val', ans2label, "data/cache")
 
 
 def main():

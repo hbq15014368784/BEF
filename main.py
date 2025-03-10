@@ -24,13 +24,15 @@ def parse_args():
                         "especially if the filesystem is slow, but requires at least 48gb of RAM")
     parser.add_argument('--dataset', default='cpv2', choices=["v2", "cpv2", "cpv1"], help="Run on VQA-2.0 instead of VQA-CP 2.0")
     parser.add_argument('--eval_each_epoch', default=True,help="Evaluate every epoch, instead of at the end")
-    parser.add_argument('--epochs', type=int, default=25)
+    parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--num_hid', type=int, default=1024)
-    parser.add_argument('--model', type=str, default='baseline0_newatt')
+    parser.add_argument('--model', type=str, default='baseline0_newatt', 
+                        choices=['baseline0', 'baseline0_newatt'])
     parser.add_argument('--output', type=str, default='logs/nvidiaexp0')
     parser.add_argument('--batch_size', type=int, default=512)
-    parser.add_argument('--seed', type=int, default=1111, help='random seed')
+    parser.add_argument('--seed', type=int, default=114514, help='random seed')
     parser.add_argument('--load_checkpoint_path', type=str, default=None)
+    parser.add_argument('--max_seq_length', type=int, default=20)
     args = parser.parse_args()
     return args
 
@@ -46,12 +48,10 @@ def main():
                                  .format(args.output, default=False)):
             os.system('rm -r ' + args.output)
             utils.create_dir(args.output)
-
         else:
             if args.load_checkpoint_path is None:
                 os._exit(1)
-
-
+    
     if dataset=='cpv1':
         dictionary = Dictionary.load_from_file('data/dictionary_v1.pkl')
     elif dataset=='cpv2' or dataset=='v2':
@@ -67,14 +67,15 @@ def main():
 
     utils.append_bias(train_dset, eval_dset, len(eval_dset.label2ans))
 
-    # Build the model using the original constructor
     constructor = 'build_%s' % args.model
     model, m_model = getattr(base_model, constructor)(train_dset, args.num_hid)
     model = model.cuda()
     m_model = m_model.cuda()
+
     loss_fn = Plain()
     genb = GenB(num_hid=1024, dataset=train_dset).cuda()
     discriminator = Discriminator(num_hid=1024, dataset=train_dset).cuda()
+    
     if dataset=='cpv1':
         model.w_emb.init_embedding('data/glove6b_init_300d_v1.npy')
         genb.w_emb.init_embedding('data/glove6b_init_300d_v1.npy')

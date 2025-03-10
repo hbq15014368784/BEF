@@ -35,7 +35,7 @@ def evaluate(model, m_model, dataloader, qid2type):
     total_number = 0
     total_other = 0
 
-    for v, q, a, qids, bias, mg, f1, type in tqdm(dataloader, ncols=100, total=len(dataloader), desc="eval"):
+    for v, s, q, a, qids, bias, mg, f1, type in tqdm(dataloader, ncols=100, total=len(dataloader), desc="eval"):
         v = Variable(v, requires_grad=False).cuda()
         q = Variable(q, requires_grad=False).cuda()
         mg = mg.cuda()
@@ -112,7 +112,7 @@ def main():
         qid2type=json.load(f)
 
     ckpt = torch.load(os.path.join(args.load_path, 'model.pth'))
-    model.load_state_dict(ckpt)
+    model.load_state_dict(ckpt, strict=False)
     print('Loaded Model!')
 
     model=model.cuda()
