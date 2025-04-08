@@ -136,12 +136,19 @@ def _load_dataset(dataroot, name, img_id2val, dataset):
         entries.append(_create_entry(img_idx, question, answer))
     return entries
 
-def _load_margin(cache_path, name, entries):
+def _load_margin(cache_path, name, entries, dataset):
     """ Load answer margin per question type.
     """
     print('{}_margin.json'.format(name))
-    mask_path = os.path.join(cache_path, 'cp-cache', '{}_margin.json'.format(name))
-    qt_dict = json.load(open(mask_path, 'r'))
+    if(dataset == 'v2'):
+        mask_path = os.path.join(cache_path, 'cache', '{}_margin.json'.format(name))
+        qt_dict = json.load(open(mask_path, 'r'))
+    elif(dataset == 'cpv2'):
+        mask_path = os.path.join(cache_path, 'cp-cache', '{}_margin.json'.format(name))
+        qt_dict = json.load(open(mask_path, 'r'))
+    else:
+        mask_path = os.path.join(cache_path, 'cp-v1-cache', '{}_margin.json'.format(name))
+        qt_dict = json.load(open(mask_path, 'r'))
     #print(qt_dict.keys())
     for qt in qt_dict:
         ans_num_dict = utils.json_keys2int(qt_dict[qt])
@@ -149,8 +156,15 @@ def _load_margin(cache_path, name, entries):
         portion = torch.tensor(list(ans_num_dict.values()), dtype=torch.float32)
         qt_dict[qt] = (ans, portion)
 
-    mask_path = os.path.join(cache_path, 'cp-cache', '{}_freq.json'.format(name))
-    qt_dict_freq = json.load(open(mask_path, 'r'))
+    if(dataset == 'v2'):
+        mask_path = os.path.join(cache_path, 'cache', '{}_freq.json'.format(name))
+        qt_dict_freq = json.load(open(mask_path, 'r'))
+    elif(dataset == 'cpv2'):
+        mask_path = os.path.join(cache_path, 'cp-cache', '{}_freq.json'.format(name))
+        qt_dict_freq = json.load(open(mask_path, 'r'))
+    else:
+        mask_path = os.path.join(cache_path, 'cp-v1-cache', '{}_freq.json'.format(name))
+        qt_dict_freq = json.load(open(mask_path, 'r'))
 
     for qt in qt_dict_freq:
         ans_num_dict = utils.json_keys2int(qt_dict_freq[qt])
@@ -177,9 +191,12 @@ class VQAFeatureDataset(Dataset):
         elif dataset=='v2':
             ans2label_path = os.path.join(dataroot, 'cache', 'trainval_ans2label.pkl')
             label2ans_path = os.path.join(dataroot, 'cache', 'trainval_label2ans.pkl')
+        
         self.ans2label = cPickle.load(open(ans2label_path, 'rb'))
         self.label2ans = cPickle.load(open(label2ans_path, 'rb'))
         self.num_ans_candidates = len(self.ans2label)
+
+        print(f"Loaded {dataset} dataset with answer vocab size: {self.num_ans_candidates}")
 
         self.dictionary = dictionary
         self.use_hdf5 = use_hdf5
@@ -202,7 +219,7 @@ class VQAFeatureDataset(Dataset):
             self.image_id2ix = None
 
         self.entries = _load_dataset(dataroot, name, self.image_id2ix, dataset=dataset)
-        self.margins, self.freq = _load_margin(dataroot, name, self.entries)
+        self.margins, self.freq = _load_margin(dataroot, name, self.entries, dataset)
 
         self.default_margin = (1.0, 0.5)
 
@@ -229,34 +246,14 @@ class VQAFeatureDataset(Dataset):
                         
                         image_to_fe[img_id] = fe
                         image_to_spatial[img_id] = sp  # 缓存空间特征
-
-
-
-
-
-                    #     if img_id in self.image_id2ix['train']:
-                    #         fe = np.array(self.features['train'][self.image_id2ix['train'][img_id]])
-                    #     else:
-                    #         fe = np.array(self.features['val'][self.image_id2ix['val'][img_id]])
-                    #     fe = torch.from_numpy(fe)
-                    # if use_hdf5:
-                    #     self.hf_train.close()
-                    #     self.hf_test.close()
                     else:
                         features = torch.load('data/rcnn_feature/'+str(img_id)+'.pth')
                         image_to_fe[img_id] = features['image_feature']
                         image_to_spatial[img_id] = features['spatial_feature']  # 假设文件中包含空间特征
-                        
-                        # fe=torch.load('data/rcnn_feature/'+str(img_id)+'.pth')['image_feature']
-
-                    # image_to_fe[img_id]=fe
 
             self.image_to_fe = image_to_fe
             self.image_to_spatial = image_to_spatial  # 保存空间特征缓存
-        
-            # self.image_to_fe = image_to_fe
         else:
-            # self.image_to_fe = None
             self.image_to_fe = None
             self.image_to_spatial = None
 
@@ -355,6 +352,7 @@ class VQAFeatureDataset(Dataset):
             freq_margin0.scatter_(0, freq_label, per0)
 
         bias = entry['bias'] if 'bias' in entry else 0
+        # print(f"[Debug] 典型偏置向量维度: {bias.shape}") 
 
         return features, spatials, ques, target, q_id, bias, target_margin, freq_margin0, q_type
     def __len__(self):

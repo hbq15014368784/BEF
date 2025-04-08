@@ -11,8 +11,10 @@ import base_model
 from torch.autograd import Variable
 
 from tqdm import tqdm
+import numpy as np
 
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 import utils1.config as config
 
@@ -73,6 +75,60 @@ def evaluate(model, m_model, dataloader, qid2type):
 
     return score, upper_bound, score_yesno, score_other, score_number
 
+def visualize_candidate_distribution(model, m_model, dataloader, qid2type, candidate_type='number', save_path='candidate_distribution.png'):
+    """
+    对指定问题类型（默认 'number' 对应 how many 问题）的候选答案概率分布进行可视化。
+    该函数遍历数据集，对于每个样本，如果其问题类型为 candidate_type，
+    则将其预测分布累积，最后绘制出所有样本的平均概率分布图。
+    """
+    distribution = None
+    count = 0
+
+    # 设置为评估模式，不计算梯度
+    model.eval()
+    m_model.eval()
+    with torch.no_grad():
+        for v, s, q, a, qids, bias, mg, f1, typ in tqdm(dataloader, desc="Visualizing distribution", ncols=100):
+            v = v.cuda()
+            q = q.cuda()
+            mg = mg.cuda()
+            hidden_, pred_l = model(v, q)
+            hidden, pred_m = m_model(hidden_, pred_l, mg, 0, a)
+
+            pred_l = F.softmax(F.normalize(pred_l) / config.temp, 1)
+            pred_m = F.softmax(F.normalize(pred_m), 1)
+            pred = config.alpha * pred_m + (1 - config.alpha) * pred_l
+
+            # 遍历当前 batch 中的每个样本
+            for i in range(len(qids)):
+                # 使用 qid2type 来判断样本类型
+                qid = str(qids[i].item() if isinstance(qids[i], torch.Tensor) else qids[i])
+                if qid2type.get(qid, None) == candidate_type:
+                    # 累计概率分布
+                    if distribution is None:
+                        distribution = pred[i].cpu().numpy()
+                    else:
+                        distribution += pred[i].cpu().numpy()
+                    count += 1
+
+    if count > 0:
+        avg_distribution = distribution / count
+    else:
+        print("No samples found for question type:", candidate_type)
+        return
+
+    # 可视化分布情况
+    plt.figure(figsize=(12, 6))
+    indices = np.arange(len(avg_distribution))
+    plt.bar(indices, avg_distribution, color='skyblue')
+    plt.xlabel("候选答案索引" )
+    plt.ylabel("平均概率")
+    plt.title(f"问题类型 '{candidate_type}' 下候选答案的分布情况")
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.show()
+    print(f"候选答案分布图已保存到: {save_path}")
+
 
 def parse_args():
     parser = argparse.ArgumentParser("Train the BottomUpTopDown model with a de-biasing method")
@@ -84,7 +140,7 @@ def parse_args():
     parser.add_argument('--num_hid', type=int, default=1024)
     parser.add_argument('--model', type=str, default='baseline0_newatt')
     parser.add_argument('--batch_size', type=int, default=512)
-    parser.add_argument('--seed', type=int, default=1111, help='random seed')
+    parser.add_argument('--seed', type=int, default=114514, help='random seed')
     parser.add_argument('--load_path', type=str, default='best_model')
     args = parser.parse_args()
     return args
@@ -107,12 +163,25 @@ def main():
     constructor = 'build_%s' % args.model
     # model = getattr(base_model, constructor)(eval_dset, args.num_hid).cuda()
     model, m_model = getattr(base_model, constructor)(eval_dset, args.num_hid)
+    # 打印当前模型的 state_dict 键
+    print("Current model keys:")
+    print(model.state_dict().keys())
 
     with open('util/qid2type_%s.json'%args.dataset,'r') as f:
         qid2type=json.load(f)
 
     ckpt = torch.load(os.path.join(args.load_path, 'model.pth'))
-    model.load_state_dict(ckpt, strict=False)
+    ckpt_m = torch.load(os.path.join(args.load_path, 'm_model.pth'))
+    # model.load_state_dict(ckpt, strict=False)
+
+    # 打印所有键（参数名）
+    state_dict = ckpt['state_dict'] if 'state_dict' in ckpt else ckpt
+    print("Keys in state_dict:")
+    for key in state_dict.keys():
+        print(key)
+
+    model.load_state_dict(ckpt)
+    m_model.load_state_dict(ckpt_m)
     print('Loaded Model!')
 
     model=model.cuda()
@@ -128,7 +197,12 @@ def main():
     torch.backends.cudnn.benchmark = True
 
     eval_loader = DataLoader(eval_dset, batch_size, shuffle=False, num_workers=0)
+
+    visualize_candidate_distribution(model, m_model, eval_loader, qid2type, candidate_type='number', save_path='tsne')
+
     eval_score, bound, yn, other, num = evaluate(model, m_model, eval_loader, qid2type)
+
+
     print('\teval score: %.2f (%.2f)' % (100 * eval_score, 100 * bound))
     print('\tyn score: %.2f other score: %.2f num score: %.2f' % (100 * yn, 100 * other, 100 * num))
 

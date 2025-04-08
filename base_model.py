@@ -103,14 +103,17 @@ class BaseModel(nn.Module):
         att = self.v_att(v, q_emb)
 
         att = nn.functional.softmax(att, 1)
-        v_emb = (att * v).sum(1)  # [batch, v_dim]      
+        v_emb = (att * v).sum(1)  # [batch, v_dim]     
+
+        # 保存注意力权重
+        self.last_attention_weights = att  # 将注意力权重保存为模型的一个属性 
 
         q_repr = self.q_net(q_emb)
         v_repr = self.v_net(v_emb)
 
         joint_repr = v_repr * q_repr  # [batch, 1024]
 
-        # logits = self.classifier(joint_repr) 
+        logits = self.classifier(joint_repr) 
 
         # 获取频域特征
         _, _, _, fsru_feat = self.sp2freq(q, v)
@@ -120,6 +123,7 @@ class BaseModel(nn.Module):
         # 获取最终预测
         final_logits = self.classifier(fused_repr)
         
+        # return joint_repr, logits
         return fused_repr, final_logits
     
 class GenB(nn.Module):

@@ -2,7 +2,7 @@
 cp_data     = True       # using vqa-cp or not
 version     = 'v2'      # 'v1' or 'v2'
 train_set   = 'train'   # 'train' or 'train+val'
-loss_type   = 'ce_margin'     # 'bce' or 'ce'
+loss_type   = 'weighted_ce'     # 'bce' or 'ce'or 'ce_margin' or focal or 
 in_memory   = False     # load all the image feature in memory
 
 # ----------------------running settings-------------------------- #

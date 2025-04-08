@@ -60,9 +60,6 @@ class DisentangledSupCon(nn.Module):
         bias_labels = torch.randint(0, 2, (len(labels),)).cuda()  # 随机生成伪标签
         bias_loss = compute_supcon_loss(bias_feat, bias_labels)  # 最大化偏差特征的混乱度
         
-        # # 正交约束
-        # orth_loss = torch.mean(torch.abs(torch.sum(content_feat * bias_feat, dim=1)))
-
         #动态正交约束
         cos_sim = F.cosine_similarity(content_feat, bias_feat, dim=1)
         orth_weight = 0.1 * (1 + torch.sigmoid(cos_sim.mean()*5))  # 相似度越高权重越大
@@ -70,13 +67,12 @@ class DisentangledSupCon(nn.Module):
         
         return content_loss + 0.5*bias_loss + orth_loss
 
-    
 class CurriculumLoss(nn.Module):
     def __init__(self, total_epochs):
         super().__init__()
         self.total_epochs = total_epochs
         
-    def forward(self, features, labels, margin, epoch):
+    def forward(self, features, labels, margin, pred, epoch):
         """简单的课程学习损失
         Args:
             features: [batch_size, feat_dim]
@@ -93,30 +89,51 @@ class CurriculumLoss(nn.Module):
         # 计算样本相似度
         features = F.normalize(features, dim=1)
         sim_matrix = torch.matmul(features, features.T)
+
+        # 新增步骤1：计算样本困难度
+        with torch.no_grad():
+            # 获取每个样本在真实类别上的边距和预测
+            batch_size = labels.size(0)
+            gt_margin = margin[torch.arange(batch_size), labels]  # [B]
+            gt_pred = pred[torch.arange(batch_size), labels]      # [B]
+            
+            # 计算困难度权重（值越大表示越困难）
+            margin_hardness = gt_margin / (gt_margin.max() + 1e-8)       # 边距越大越困难
+            pred_hardness = 1 - torch.sigmoid(gt_pred)                   # 预测置信度越低越困难
+            hardness = 0.6 * margin_hardness + 0.4 * pred_hardness        # 加权组合
         
         # 创建标签mask
         label_mask = (labels.unsqueeze(1) == labels.unsqueeze(0)).float()
+
         
         # 选择困难负样本
         with torch.no_grad():
             neg_mask = 1 - label_mask
             neg_sim = sim_matrix * neg_mask
+            # print(f"neg_sim:{neg_sim.shape}")
             
             # 对每个样本选择最困难的负样本
             num_negs = int(difficulty_ratio * (neg_mask.sum(1).max().item()))
             hardest_negs, _ = neg_sim.topk(k=num_negs, dim=1)
+            # print(f"hardest_negs:{hardest_negs.shape}")
         
         # 计算课程学习损失（关注困难负样本）
-        curriculum_loss = -torch.log(1 - hardest_negs.mean())
+        hardness_expanded = hardness.unsqueeze(1).expand_as(hardest_negs)
+        
+        # 计算加权的课程学习损失
+        weighted_hardest_negs = hardest_negs * hardness_expanded
+        curriculum_loss = -torch.log(1 - weighted_hardest_negs.mean(dim=1)).mean()
+
+        # curriculum_loss = -torch.log(1 - hardest_negs.mean())
 
         return curriculum_loss
 
 class BiasAwareNormalization(nn.Module):
-    def __init__(self, feat_dim):
+    def __init__(self, feat_dim, num_ans_candidates):
         super().__init__()
         # 偏差信息映射层
         self.bias_proj = nn.Sequential(
-            nn.Linear(2274, 512),   # 先降维减少参数量
+            nn.Linear(num_ans_candidates, 512),   # 先降维减少参数量
             nn.ReLU(),
             nn.Linear(512, feat_dim),
             nn.Sigmoid()
@@ -174,11 +191,16 @@ def train(model, m_model, loss_fn, genb, discriminator, train_loader, eval_loade
     total_step = 0
     best_eval_score = 0
 
-    # supcon_loss = DisentangledSupCon(feat_dim=1024).cuda()
-    # curriculum = CurriculumLoss(args.epochs).cuda()
+    supcon_loss = DisentangledSupCon(feat_dim=1024).cuda()
+    curriculum = CurriculumLoss(args.epochs).cuda()
 
-    # bias_norm = BiasAwareNormalization(feat_dim=1024).cuda()
-
+    if(args.dataset=='v2'):
+        bias_norm = BiasAwareNormalization(feat_dim=1024, num_ans_candidates=2410).cuda()
+    elif(args.dataset=='cpv2'):
+        bias_norm = BiasAwareNormalization(feat_dim=1024, num_ans_candidates=2274).cuda()
+    else:
+        bias_norm = BiasAwareNormalization(feat_dim=1024, num_ans_candidates=1691).cuda()
+    
     logger.write('start training: seed: %d, batch_size: %d, epochs: %d' % (args.seed, args.batch_size, args.epochs))
 
     for epoch in range(num_epochs):
@@ -187,7 +209,7 @@ def train(model, m_model, loss_fn, genb, discriminator, train_loader, eval_loade
         train_score = 0
 
         t = time.time()
-        for i, (v,s, q, a, qid, bias, mg, f1, type) in tqdm(enumerate(train_loader), ncols=100, desc="Epoch %d" % (epoch + 1), total=len(train_loader)):
+        for i, (v, s, q, a, qid, bias, mg, f1, type) in tqdm(enumerate(train_loader), ncols=100, desc="Epoch %d" % (epoch + 1), total=len(train_loader)):
             total_step += 1
 
             #########################################
@@ -207,26 +229,34 @@ def train(model, m_model, loss_fn, genb, discriminator, train_loader, eval_loade
             optim.zero_grad()
 
             hidden_, pred = model(v, q)
-            # hidden, pred_m = m_model(hidden_, pred, mg, epoch, a)
-            # dict_args = {'margin': mg, 'bias': bias, 'hidden': hidden, 'epoch': epoch, 'per': f1}
+            hidden, pred_m = m_model(hidden_, pred, mg, epoch, a)
+            dict_args = {'margin': mg, 'bias': bias, 'hidden': hidden, 'epoch': epoch, 'per': f1}
 
-            # ce_loss = -F.log_softmax(pred, dim=-1) * a
-            # ce_loss = ce_loss * f1
-            # loss = ce_loss.sum(dim=-1).mean() + loss_fn(hidden, a, **dict_args)
+            ce_loss = -F.log_softmax(pred, dim=-1) * a
+            ce_loss = ce_loss * f1
+            loss = ce_loss.sum(dim=-1).mean() + loss_fn(hidden, a, **dict_args)
 
-            # # 偏差感知归一化
-            # # print(bias.shape)
-            # hidden_ = bias_norm(hidden_, bias)  # 新增代码
+            loss = compute_supcon_loss(hidden_, gt) + loss.mean()
 
-            # # 解耦对比学习
-            # content_loss = supcon_loss(hidden_, gt, bias)
+            # 偏差感知归一化
+            # print(bias.shape)
+            hidden_ = bias_norm(hidden_, bias)  # 新增代码
+
+            # 解耦对比学习
+            content_loss = supcon_loss(hidden_, gt, bias)
             
             # # 计算课程学习损失
-            # curr_loss = curriculum(hidden_, gt, mg, epoch)
+            curr_loss = curriculum(hidden_, gt, mg, pred, epoch)
+            # print(f"margin shape: {mg.shape}")
+            # print(f"pred shape: {pred.shape}")
+            # print(f"hidden_ shape: {hidden_.shape}")
+            # print(f"gt shape: {gt.shape}")
 
-            # loss = compute_supcon_loss(hidden_, gt) + loss.mean() + 0.3 * content_loss + 0.2 * curr_loss
+            # loss = compute_supcon_loss(hidden_, gt) + loss.mean() + content_loss + 0.5 * curr_loss
+            loss = compute_supcon_loss(hidden_, gt) + loss.mean() + content_loss + 0.2 * curr_loss
 
-            loss = F.binary_cross_entropy_with_logits(pred, a);
+            # updn损失
+            # loss = F.binary_cross_entropy_with_logits(pred, a);
 
             loss.backward()
 
@@ -237,9 +267,9 @@ def train(model, m_model, loss_fn, genb, discriminator, train_loader, eval_loade
 
             total_loss += loss.item() * q.size(0)
 
-            # pred = F.softmax(F.normalize(pred) / config.temp, 1)
-            # pred_m = F.softmax(F.normalize(pred_m), 1)
-            # pred = config.alpha * pred_m + (1 - config.alpha) * pred
+            pred = F.softmax(F.normalize(pred) / config.temp, 1)
+            pred_m = F.softmax(F.normalize(pred_m), 1)
+            pred = config.alpha * pred_m + (1 - config.alpha) * pred
 
             batch_score = compute_score_with_logits(pred, a.data).sum()
             train_score += batch_score
@@ -272,7 +302,9 @@ def train(model, m_model, loss_fn, genb, discriminator, train_loader, eval_loade
 
             if main_eval_score > best_eval_score:
                 model_path = os.path.join(output, 'model.pth')
+                m_model_path = os.path.join(output, 'm_model.pth')
                 torch.save(model.state_dict(), model_path)
+                torch.save(m_model.state_dict(), m_model_path)
                 best_eval_score = main_eval_score
 
         model_path = os.path.join(output, 'model_final.pth')
@@ -299,9 +331,9 @@ def evaluate(model, m_model, dataloader, qid2type):
         hidden_, pred = model(v, q)
         hidden, pred_m = m_model(hidden_, pred, mg, 0,  a)
 
-        # pred = F.softmax(F.normalize(pred) / config.temp, 1)
-        # pred_m = F.softmax(F.normalize(pred_m), 1)
-        # pred = config.alpha * pred_m + (1 - config.alpha) * pred
+        pred = F.softmax(F.normalize(pred) / config.temp, 1)
+        pred_m = F.softmax(F.normalize(pred_m), 1)
+        pred = config.alpha * pred_m + (1 - config.alpha) * pred
 
         batch_score = compute_score_with_logits(pred, a.cuda()).cpu().numpy().sum(1)
         score += batch_score.sum()

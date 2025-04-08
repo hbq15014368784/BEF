@@ -9,7 +9,7 @@ import pickle as cPickle
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataset import Dictionary
-import utils1
+import utils
 import argparse
 
 
@@ -171,7 +171,7 @@ def create_ans2label(occurence, name, processed_dir='data/processed'):
         ans2label[answer] = label
         label += 1
 
-    utils1.create_dir(processed_dir)
+    utils.create_dir(processed_dir)
 
     cache_file = os.path.join(processed_dir, name + '_ans2label.pkl')
     cPickle.dump(ans2label, open(cache_file, 'wb'))
@@ -221,7 +221,7 @@ def compute_target(answers_dset, ans2label, name, cache_root):
         })
 
     print(cache_root)
-    utils1.create_dir(cache_root)
+    utils.create_dir(cache_root)
     cache_file = os.path.join(cache_root, name+'_target.pkl')
     print(cache_file)
     with open(cache_file, 'wb') as f:
@@ -329,6 +329,9 @@ def load_cp_v1():
     compute_target(train_answers, ans2label, 'train', "data/cp-v1-cache")
     compute_target(val_answers, ans2label, 'val', "data/cp-v1-cache")
 
+    # tool for margin loss
+    extract_type(train_answers, 'train', ans2label, "data/cp-v1-cache")
+    extract_type(val_answers, 'val', ans2label, "data/cp-v1-cache")
 
 def load_v2():
     train_answer_file = 'data/v2_mscoco_train2014_annotations.json'

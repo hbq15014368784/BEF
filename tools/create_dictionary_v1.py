@@ -11,10 +11,10 @@ def create_dictionary(dataroot):
     dictionary = Dictionary()
     questions = []
     files = [
-        'OpenEnded_mscoco_train2014_questions.json',
-        'OpenEnded_mscoco_val2014_questions.json',
-        'OpenEnded_mscoco_test2015_questions.json',
-        'OpenEnded_mscoco_test-dev2015_questions.json'
+        'v2_OpenEnded_mscoco_train2014_questions.json',
+        'v2_OpenEnded_mscoco_val2014_questions.json',
+        'v2_OpenEnded_mscoco_test2015_questions.json',
+        'v2_OpenEnded_mscoco_test-dev2015_questions.json'
     ]
     for path in files:
         question_path = os.path.join(dataroot, path)
@@ -35,7 +35,7 @@ def create_glove_embedding_init(idx2word, glove_file):
     for entry in entries:
         vals = entry.split(' ')
         word = vals[0]
-        vals = map(float, vals[1:])
+        vals = [float(s) for s in vals[1:]]
         word2emb[word] = np.array(vals)
     for idx, word in enumerate(idx2word):
         if word not in word2emb:
